@@ -44,7 +44,7 @@ while True:
                 if current_time - last_ocr_time > 0.5: 
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     # เพิ่ม Margin รอบๆ รถอีกนิดเพื่อให้เห็นป้ายทะเบียนชัดขึ้น
-                    car_roi = frame[max(0, y1-10):y2+10, max(0, x1-10):x2+10]
+                    car_roi = frame[max(0, y1-20):y2+20, max(0, x1-20):x2+20]
                     
                     if car_roi.size > 0:
                         # ลองเปลี่ยนเป็นอ่านทั้งไทยและอังกฤษ (ถ้าลง EasyOCR ครบจะอ่านไทยได้)
