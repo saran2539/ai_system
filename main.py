@@ -1,44 +1,76 @@
 import cv2
 from ultralytics import YOLO
+import easyocr
+import time
 
-# 1. โหลดโมเดล
+# 1. โหลดสมอง AI (ใช้ YOLOv8 และ EasyOCR)
 model = YOLO('yolov8n.pt') 
+reader = easyocr.Reader(['en'], gpu=False) 
 
-# 2. ตั้งค่ากล้องมือถือ
 url = "http://10.77.145.128:8080/video"
 cap = cv2.VideoCapture(url)
 
-PERSON_LIMIT = 10 
+# --- แก้ไขจุดนี้: เปลี่ยนจาก 2 เป็น 15 ตามคำขอครับ ---
+PERSON_LIMIT = 15 
+# ----------------------------------------------
+
+last_ocr_time = 0 
+
+print(f"--- ระบบเริ่มทำงาน (จะเตือนเมื่อคนเกิน {PERSON_LIMIT} คน) ---")
 
 while True:
     success, frame = cap.read()
     if not success: break
 
-    # 3. ให้ AI ตรวจจับ (เราจะใช้ผลลัพธ์ 2 แบบ)
     results = model(frame, stream=True)
-    
-    person_count = 0 
+    person_count = 0
+    current_time = time.time()
+    annotated_frame = frame.copy()
 
     for r in results:
-        # --- ส่วนที่ 1: วาดกรอบทุกอย่างที่ AI เห็น (คน, รถ, ของใช้) ---
+        # วาดกรอบวัตถุทุกอย่าง (โน้ตบุ๊ก, แก้วน้ำ, รถ, คน)
         annotated_frame = r.plot() 
 
-        # --- ส่วนที่ 2: วนลูปเพื่อหาจำนวนคนมานับเลข ---
         for box in r.boxes:
             class_id = int(box.cls[0])
-            if class_id == 0:  # 0 คือ ID ของ 'person'
+            conf = float(box.conf[0])
+
+            # --- นับจำนวนคน ---
+            if class_id == 0: 
                 person_count += 1
+            
+            # --- อ่านทะเบียนรถ (ทำงานทุก 0.5 วินาทีเพื่อความลื่นไหล) ---
+            if class_id in [2, 3, 7] and conf > 0.5:
+                if current_time - last_ocr_time > 0.5: 
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    # เพิ่ม Margin รอบๆ รถอีกนิดเพื่อให้เห็นป้ายทะเบียนชัดขึ้น
+                    car_roi = frame[max(0, y1-10):y2+10, max(0, x1-10):x2+10]
+                    
+                    if car_roi.size > 0:
+                        # ลองเปลี่ยนเป็นอ่านทั้งไทยและอังกฤษ (ถ้าลง EasyOCR ครบจะอ่านไทยได้)
+                        ocr_res = reader.readtext(car_roi)
+                        for (bbox, text, prob) in ocr_res:
+                            if prob > 0.3: # ลดเกณฑ์ความมั่นใจลงนิดนึงเพื่อให้แสดงผลบ่อยขึ้น
+                                last_ocr_time = current_time
+                                # วาดกรอบสีเหลืองและข้อความที่อ่านได้
+                                cv2.putText(annotated_frame, f"Detected: {text}", (x1, y1 - 20), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                                print(f"พบทะเบียน: {text} (ความชัด: {prob:.2f})")
 
-    # 4. แสดงจำนวนคนและแจ้งเตือนบน annotated_frame (ภาพที่มีกรอบทุกอย่างแล้ว)
-    color = (0, 255, 0)
+    # --- ส่วนการแจ้งเตือน ---
+    color = (0, 255, 0) # สีเขียว (ถ้าคนไม่เกิน 15)
+    
     if person_count > PERSON_LIMIT:
-        color = (0, 0, 255)
-        cv2.putText(annotated_frame, "!!! ALERT: TOO MANY PEOPLE !!!", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
+        color = (0, 0, 255) # สีแดง (ถ้าคนเกิน 15)
+        # ปรับขนาดตัวอักษรเตือนให้ใหญ่ขึ้น (ขนาด 1.5) เพื่อความเด่นชัด
+        cv2.putText(annotated_frame, "!!! DANGER: OVER 15 PEOPLE !!!", (30, 150), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 4)
 
-    cv2.putText(annotated_frame, f"People Count: {person_count}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+    # แสดงจำนวนคนปัจจุบัน
+    cv2.putText(annotated_frame, f"People in Area: {person_count}", (50, 60), 
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
-    # แสดงผลภาพ annotated_frame
-    cv2.imshow("AI Multi-Detection & Counter", annotated_frame)
+    cv2.imshow("AI Security System (Limit: 15)", annotated_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
