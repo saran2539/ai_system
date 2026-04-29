@@ -1,35 +1,45 @@
 import cv2
+from ultralytics import YOLO
 
-# ใส่ IP มือถือของคุณตรงนี้ (อย่าลืมเติม /video ไว้ท้ายสุด)
-# ถ้าเปลี่ยน Wi-Fi แล้วเลข IP เปลี่ยน อย่าลืมมาแก้ตรงนี้ด้วยนะครับ
+# 1. โหลดโมเดล
+model = YOLO('yolov8n.pt') 
+
+# 2. ตั้งค่ากล้องมือถือ
 url = "http://10.77.145.128:8080/video"
-
-print("--- ระบบกำลังเชื่อมต่อกับกล้องมือถือ ---")
-
-# คำสั่งเปิดการเชื่อมต่อ
 cap = cv2.VideoCapture(url)
 
-# เช็คว่าคอมเห็นกล้องมือถือไหม
-if not cap.isOpened():
-    print("!!! Error: ไม่สามารถเชื่อมต่อได้ !!!")
-    print("1. เช็คว่ามือถือเปิด Start Server ในแอปหรือยัง")
-    print("2. เช็คว่าคอมกับมือถือต่อ Wi-Fi เดียวกันไหม")
-else:
-    print("--- เชื่อมต่อสำเร็จ! กำลังแสดงภาพ ---")
+PERSON_LIMIT = 10 
 
 while True:
-    # อ่านภาพจากมือถือ
     success, frame = cap.read()
-    
-    if success:
-        # แสดงภาพหน้าจอ (ย่อขนาดให้ดูง่าย)
-        frame_small = cv2.resize(frame, (640, 480))
-        cv2.imshow("Mobile Camera", frame_small)
-    else:
-        print("สัญญาณภาพจากมือถือขาดหาย...")
-        break
+    if not success: break
 
-    # วิธีปิด: คลิกที่หน้าต่างรูปภาพแล้วกดปุ่ม q
+    # 3. ให้ AI ตรวจจับ (เราจะใช้ผลลัพธ์ 2 แบบ)
+    results = model(frame, stream=True)
+    
+    person_count = 0 
+
+    for r in results:
+        # --- ส่วนที่ 1: วาดกรอบทุกอย่างที่ AI เห็น (คน, รถ, ของใช้) ---
+        annotated_frame = r.plot() 
+
+        # --- ส่วนที่ 2: วนลูปเพื่อหาจำนวนคนมานับเลข ---
+        for box in r.boxes:
+            class_id = int(box.cls[0])
+            if class_id == 0:  # 0 คือ ID ของ 'person'
+                person_count += 1
+
+    # 4. แสดงจำนวนคนและแจ้งเตือนบน annotated_frame (ภาพที่มีกรอบทุกอย่างแล้ว)
+    color = (0, 255, 0)
+    if person_count > PERSON_LIMIT:
+        color = (0, 0, 255)
+        cv2.putText(annotated_frame, "!!! ALERT: TOO MANY PEOPLE !!!", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
+
+    cv2.putText(annotated_frame, f"People Count: {person_count}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+    # แสดงผลภาพ annotated_frame
+    cv2.imshow("AI Multi-Detection & Counter", annotated_frame)
+
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
